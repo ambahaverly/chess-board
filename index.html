@@ -3,7 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Sea &amp; Sky — Chess</title>
+<title>Sea and Sky Chess</title>
+<meta name="description" content="A calm two-player chess game. Open a room, share the code, and play live from anywhere.">
+<meta property="og:title" content="Sea and Sky Chess">
+<meta property="og:description" content="A calm two-player chess game. Open a room, share the code, and play live from anywhere.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Sea and Sky Chess">
+<meta name="twitter:description" content="A calm two-player chess game. Open a room, share the code, and play live from anywhere.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;500;600&family=Noto+Sans+Symbols+2&display=swap" rel="stylesheet">
@@ -152,7 +159,7 @@
   <button class="close-x" id="onlineClose">&#10005;</button>
   <div id="onlineHome">
     <h2>Play online</h2>
-    <p>Open a room and share the code, or join one your opponent made. You'll connect directly to each other — moves land instantly, wherever you both are.</p>
+    <p>Open a room and share the code, or join one your opponent made. You'll connect directly to each other, moves land instantly, wherever you both are.</p>
     <button class="btn primary" id="createRoom" style="width:100%; margin-bottom:8px;">Create a room</button>
     <div class="field"><input id="joinInput" maxlength="4" placeholder="CODE" autocomplete="off"><button class="btn" id="joinRoom">Join</button></div>
     <div class="netstatus" id="onlineMsg"></div>
@@ -351,16 +358,16 @@ function renderTrays(){
 
 function renderStatus(){
   const st=gameStatus(state);
-  const who=state.turn==="A"?"Abyss":"Sky";
+  const who=state.turn==="A"?"Abyss":"Aries";
   let txt="";
-  if(st==="checkmate"){ const win=state.turn==="A"?"Sky":"Abyss"; txt=`Checkmate — ${win} prevails`; }
-  else if(st==="stalemate") txt="Stalemate — the tide is still";
+  if(st==="checkmate"){ const win=state.turn==="A"?"Aries":"Abyss"; txt=`Checkmate, ${win} prevails`; }
+  else if(st==="stalemate") txt="Stalemate, the tide is still";
   else if(st==="check") txt=`${who} in check`;
   else txt=`${who} to move`;
   let chip=`<span class="turnchip ${state.turn}"></span>`;
   if(st==="checkmate"||st==="stalemate") chip="";
   let net="";
-  if(online){ net=` · you are ${online.side==="A"?"Abyss":"Sky"}`; }
+  if(online){ net=` · you are ${online.side==="A"?"Abyss":"Aries"}`; }
   statusEl.innerHTML=chip+`<span>${txt}${net}</span>`;
 }
 
@@ -433,7 +440,7 @@ document.getElementById("undoBtn").addEventListener("click",()=>{
 });
 
 /* ============================================================
-   ONLINE PLAY — real peer-to-peer over WebRTC (PeerJS).
+   ONLINE PLAY, real peer-to-peer over WebRTC (PeerJS).
    A public signaling server just helps the two browsers find each
    other; once connected, moves travel directly between them, no
    backend, no polling, no account for either player.
@@ -451,7 +458,7 @@ function randCode(){ let s=""; const A="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; for(l
 function peerIdFor(code){ return "seaandsky5-"+code; }
 function peerAvailable(){ return typeof window!=="undefined" && typeof window.Peer==="function"; }
 
-/* ICE servers — STUN finds a direct path; TURN relays when one can't form
+/* ICE servers, STUN finds a direct path; TURN relays when one can't form
    (this is what makes country-to-country play work). */
 const ICE_CONFIG = {
   iceServers: [
@@ -471,7 +478,7 @@ const ICE_CONFIG = {
 
 function sendState(){
   if(!online||!online.conn||online.conn.open!==true) return;
-  try{ online.conn.send({type:"state",payload:serialize()}); }catch(e){ roomNet.textContent="Send hiccup — try your move again."; }
+  try{ online.conn.send({type:"state",payload:serialize()}); }catch(e){ roomNet.textContent="Send hiccup, try your move again."; }
 }
 function sendReset(){
   if(!online||!online.conn||online.conn.open!==true) return;
@@ -483,7 +490,7 @@ function wireConnection(conn){
   conn.on("open",()=>{
     online.opponentPresent=true;
     onlineOverlay.classList.remove("show");
-    roomNet.innerHTML=`<span class="live">● connected</span> — playing live`;
+    roomNet.innerHTML=`<span class="live">● connected</span>, playing live`;
     if(online.host) sendState(); // hand the joiner the current board
   });
   conn.on("data",(msg)=>{
@@ -496,40 +503,40 @@ function wireConnection(conn){
     }
   });
   conn.on("close",()=>{ online.opponentPresent=false; roomNet.innerHTML="opponent disconnected"; });
-  conn.on("error",()=>{ roomNet.innerHTML="connection hiccup — ask them to reopen the link"; });
+  conn.on("error",()=>{ roomNet.innerHTML="connection hiccup, ask them to reopen the link"; });
 }
 
 function createRoom(){
-  if(!peerAvailable()){ onlineMsg.textContent="Couldn't load the connection library — check your internet and reload the page."; return; }
+  if(!peerAvailable()){ onlineMsg.textContent="Couldn't load the connection library, check your internet and reload the page."; return; }
   const code=randCode();
   const peer=new Peer(peerIdFor(code),{debug:0,config:ICE_CONFIG});
   online={ code, side:"A", host:true, peer, conn:null, opponentPresent:false };
   orientation="A";
   state=initialState(); history=[]; lastMove=null; selected=null; legalForSel=[];
   render();
-  showRoomView(code,"You are Abyss — you move first");
+  showRoomView(code,"You are Abyss, you move first");
   roomNet.textContent="waiting for opponent to join…";
   peer.on("connection",(conn)=>wireConnection(conn));
   peer.on("error",(err)=>{
-    if(err&&err.type==="unavailable-id"){ onlineMsg.textContent="That code just collided — try Create a room again."; leaveRoom(); }
-    else roomNet.textContent="Connection error — try leaving and creating a new room.";
+    if(err&&err.type==="unavailable-id"){ onlineMsg.textContent="That code just collided, try Create a room again."; leaveRoom(); }
+    else roomNet.textContent="Connection error, try leaving and creating a new room.";
   });
 }
 
 function joinRoom(){
   const code=document.getElementById("joinInput").value.trim().toUpperCase();
   if(code.length!==4){ onlineMsg.textContent="Enter the 4-character room code."; return; }
-  if(!peerAvailable()){ onlineMsg.textContent="Couldn't load the connection library — check your internet and reload the page."; return; }
+  if(!peerAvailable()){ onlineMsg.textContent="Couldn't load the connection library, check your internet and reload the page."; return; }
   const peer=new Peer({debug:0,config:ICE_CONFIG});
   online={ code, side:"S", host:false, peer, conn:null, opponentPresent:false };
   orientation="A"; selected=null; legalForSel=[];
   peer.on("open",()=>{
     const conn=peer.connect(peerIdFor(code),{reliable:true});
     wireConnection(conn);
-    showRoomView(code,"You are Sky — Abyss moves first");
+    showRoomView(code,"You are Aries, Abyss moves first");
     roomNet.textContent="connecting…";
   });
-  peer.on("error",()=>{ onlineMsg.textContent="Couldn't reach that room — double-check the code and that they're still on the page."; });
+  peer.on("error",()=>{ onlineMsg.textContent="Couldn't reach that room, double-check the code and that they're still on the page."; });
 }
 
 function showRoomView(code,role){
@@ -559,7 +566,7 @@ document.getElementById("joinInput").addEventListener("input",e=>{ e.target.valu
 render();
 
 /* ============================================================
-   ENVIRONMENT FX — bubbles for the deep, birds for the sky
+   ENVIRONMENT FX, bubbles for the deep, birds for the sky
    ============================================================ */
 const fx=(function(){
   const cv=document.getElementById("fx");
@@ -665,7 +672,7 @@ const fx=(function(){
 })();
 
 /* ============================================================
-   AMBIENT AUDIO — generative "chill seaside" loop, Web Audio API.
+   AMBIENT AUDIO, generative "chill seaside" loop, Web Audio API.
    No external files: soft brown-noise waves, a slow warm pad,
    sparse pentatonic chimes. All original/synthesized, so there's
    nothing to license or fetch.
@@ -698,6 +705,31 @@ const audio=(function(){
     src.connect(filt); filt.connect(swell); swell.connect(master);
     src.start(); lfo.start();
     waveSwellGain=swell; waveLfo=lfo;
+  }
+  function layerSurf(){
+    // Rolling beach waves: each swell builds, breaks bright, then washes out.
+    const src=ctx.createBufferSource(); src.buffer=noiseBuffer(8); src.loop=true;
+    const filt=ctx.createBiquadFilter(); filt.type="bandpass"; filt.frequency.value=480; filt.Q.value=0.7;
+    const g=ctx.createGain(); g.gain.value=0.0;
+    src.connect(filt); filt.connect(g); g.connect(master);
+    src.start();
+    function breakWave(){
+      if(!playing){ setTimeout(breakWave,2000); return; }
+      const now=ctx.currentTime;
+      const swellT=3.5+Math.random()*3.0;   // time for the wave to build
+      const washT=2.8+Math.random()*2.6;    // time for it to recede up the sand
+      const peak=0.26+Math.random()*0.16;   // how big this wave is
+      filt.frequency.cancelScheduledValues(now);
+      filt.frequency.setValueAtTime(340,now);
+      filt.frequency.linearRampToValueAtTime(1500,now+swellT);        // brighten as it breaks
+      filt.frequency.linearRampToValueAtTime(300,now+swellT+washT);   // dull as it recedes
+      g.gain.cancelScheduledValues(now);
+      g.gain.setValueAtTime(g.value,now);
+      g.gain.linearRampToValueAtTime(peak,now+swellT);
+      g.gain.linearRampToValueAtTime(0.02,now+swellT+washT);
+      setTimeout(breakWave,(swellT+washT)*1000*(0.82+Math.random()*0.3));
+    }
+    breakWave();
   }
   function layerWind(){
     const src=ctx.createBufferSource(); src.buffer=noiseBuffer(6); src.loop=true;
@@ -756,7 +788,7 @@ const audio=(function(){
   function start(){
     ensureCtx();
     if(ctx.state==="suspended") ctx.resume();
-    if(!started){ started=true; layerWaves(); layerWind(); layerPad(); layerChimes(); }
+    if(!started){ started=true; layerWaves(); layerSurf(); layerWind(); layerPad(); layerChimes(); }
     playing=true;
     master.gain.cancelScheduledValues(ctx.currentTime);
     master.gain.setValueAtTime(master.gain.value,ctx.currentTime);
