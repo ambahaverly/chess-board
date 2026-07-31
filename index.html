@@ -451,6 +451,24 @@ function randCode(){ let s=""; const A="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; for(l
 function peerIdFor(code){ return "seaandsky5-"+code; }
 function peerAvailable(){ return typeof window!=="undefined" && typeof window.Peer==="function"; }
 
+/* ICE servers — STUN finds a direct path; TURN relays when one can't form
+   (this is what makes country-to-country play work). */
+const ICE_CONFIG = {
+  iceServers: [
+    { urls: "stun:stun.relay.metered.ca:80" },
+    {
+      urls: [
+        "turn:standard.relay.metered.ca:80",
+        "turn:standard.relay.metered.ca:80?transport=tcp",
+        "turn:standard.relay.metered.ca:443",
+        "turn:standard.relay.metered.ca:443?transport=tcp"
+      ],
+      username: "1d0d5faac1dfb0145c7d66ac",
+      credential: "ndk2ydlBCg7vPfBj"
+    }
+  ]
+};
+
 function sendState(){
   if(!online||!online.conn||online.conn.open!==true) return;
   try{ online.conn.send({type:"state",payload:serialize()}); }catch(e){ roomNet.textContent="Send hiccup — try your move again."; }
@@ -484,7 +502,7 @@ function wireConnection(conn){
 function createRoom(){
   if(!peerAvailable()){ onlineMsg.textContent="Couldn't load the connection library — check your internet and reload the page."; return; }
   const code=randCode();
-  const peer=new Peer(peerIdFor(code),{debug:0});
+  const peer=new Peer(peerIdFor(code),{debug:0,config:ICE_CONFIG});
   online={ code, side:"A", host:true, peer, conn:null, opponentPresent:false };
   orientation="A";
   state=initialState(); history=[]; lastMove=null; selected=null; legalForSel=[];
@@ -502,7 +520,7 @@ function joinRoom(){
   const code=document.getElementById("joinInput").value.trim().toUpperCase();
   if(code.length!==4){ onlineMsg.textContent="Enter the 4-character room code."; return; }
   if(!peerAvailable()){ onlineMsg.textContent="Couldn't load the connection library — check your internet and reload the page."; return; }
-  const peer=new Peer({debug:0});
+  const peer=new Peer({debug:0,config:ICE_CONFIG});
   online={ code, side:"S", host:false, peer, conn:null, opponentPresent:false };
   orientation="A"; selected=null; legalForSel=[];
   peer.on("open",()=>{
