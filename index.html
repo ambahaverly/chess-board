@@ -91,6 +91,7 @@
   button.btn:hover{ background:rgba(255,255,255,.28); }
   button.btn.primary{ background:rgba(255,255,255,.9); color:#0c3348; border-color:transparent; font-weight:600; }
   button.btn.primary:hover{ background:#fff; }
+  button.btn.active{ background:rgba(255,255,255,.34); border-color:rgba(255,255,255,.6); }
 
   .overlay{ position:fixed; inset:0; background:rgba(4,26,38,.6); -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px);
     display:none; align-items:center; justify-content:center; z-index:40; padding:20px; }
@@ -138,6 +139,7 @@
   <button class="btn primary" id="newBtn">New game</button>
   <button class="btn" id="onlineBtn">Play online</button>
   <button class="btn" id="undoBtn">Undo</button>
+  <button class="btn" id="musicBtn">♪ Music: off</button>
 </div>
 
 <div class="overlay" id="promoOverlay"><div class="card">
@@ -150,7 +152,7 @@
   <button class="close-x" id="onlineClose">&#10005;</button>
   <div id="onlineHome">
     <h2>Play online</h2>
-    <p>Open a room and share the code, or join one your opponent made. Moves sync every couple of seconds — made for turn-based play between cities.</p>
+    <p>Open a room and share the code, or join one your opponent made. You'll connect directly to each other — moves land instantly, wherever you both are.</p>
     <button class="btn primary" id="createRoom" style="width:100%; margin-bottom:8px;">Create a room</button>
     <div class="field"><input id="joinInput" maxlength="4" placeholder="CODE" autocomplete="off"><button class="btn" id="joinRoom">Join</button></div>
     <div class="netstatus" id="onlineMsg"></div>
@@ -165,6 +167,7 @@
   </div>
 </div></div>
 
+<script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
 <script>
 
 "use strict";
@@ -398,7 +401,7 @@ function applyMove(mv){
   const _mover=enemy(state.turn);
   render();
   triggerFX(_mover, mv.to);
-  if(online) pushOnline();
+  if(online) sendState();
 }
 
 /* promotion */
@@ -421,9 +424,8 @@ function openPromo(){
 
 /* controls */
 document.getElementById("newBtn").addEventListener("click",()=>{
-  if(online){ /* both restart via sync */ }
   state=initialState(); history=[]; selected=null; legalForSel=[]; lastMove=null; orientation="A";
-  render(); if(online) pushOnline(true);
+  render(); if(online) sendReset();
 });
 document.getElementById("undoBtn").addEventListener("click",()=>{
   if(online) return; // no undo in online play
@@ -431,7 +433,10 @@ document.getElementById("undoBtn").addEventListener("click",()=>{
 });
 
 /* ============================================================
-   ONLINE PLAY  (shared window.storage; poll-based sync)
+   ONLINE PLAY — real peer-to-peer over WebRTC (PeerJS).
+   A public signaling server just helps the two browsers find each
+   other; once connected, moves travel directly between them, no
+   backend, no polling, no account for either player.
    ============================================================ */
 const onlineOverlay=document.getElementById("onlineOverlay");
 const onlineHome=document.getElementById("onlineHome");
@@ -442,78 +447,71 @@ const roomNet=document.getElementById("roomNet");
 function serialize(){ return JSON.stringify({board:state.board,turn:state.turn,epTarget:state.epTarget,castling:state.castling,lastMove}); }
 function deserialize(str){ const o=JSON.parse(str); state={board:o.board,turn:o.turn,epTarget:o.epTarget,castling:o.castling}; lastMove=o.lastMove||null; }
 
-function roomKey(code){ return "dsvs:room:"+code; }
 function randCode(){ let s=""; const A="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; for(let i=0;i<4;i++)s+=A[Math.floor(Math.random()*A.length)]; return s; }
+function peerIdFor(code){ return "seaandsky5-"+code; }
+function peerAvailable(){ return typeof window!=="undefined" && typeof window.Peer==="function"; }
 
-async function storageAvailable(){ return typeof window!=="undefined" && window.storage && typeof window.storage.set==="function"; }
-
-async function pushOnline(reset){
-  if(!online) return;
-  online.version++;
-  const payload={ v:online.version, state:serialize(), players:online.players, host:online.host, resetFlag:reset?Date.now():online.lastReset };
-  online.lastReset=payload.resetFlag;
-  try{ await window.storage.set(roomKey(online.code), JSON.stringify(payload), true); }
-  catch(e){ roomNet.textContent="Sync hiccup — will retry"; }
+function sendState(){
+  if(!online||!online.conn||online.conn.open!==true) return;
+  try{ online.conn.send({type:"state",payload:serialize()}); }catch(e){ roomNet.textContent="Send hiccup — try your move again."; }
+}
+function sendReset(){
+  if(!online||!online.conn||online.conn.open!==true) return;
+  try{ online.conn.send({type:"reset",payload:serialize()}); }catch(e){}
 }
 
-async function pollOnline(){
-  if(!online) return;
-  try{
-    const res=await window.storage.get(roomKey(online.code), true);
-    if(res&&res.value){
-      const data=JSON.parse(res.value);
-      // opponent presence
-      const bothHere=data.players.A&&data.players.S;
-      if(bothHere && !online.opponentPresent){ online.opponentPresent=true; onlineOverlay.classList.remove("show"); }
-      online.opponentPresent=bothHere;
-      // reset detection
-      if(data.resetFlag && data.resetFlag!==online.lastReset && data.v<=1){
-        online.lastReset=data.resetFlag;
-      }
-      if(data.v>online.version){
-        online.version=data.v;
-        deserialize(data.state);
-        selected=null; legalForSel=[]; orientation="A";
-        render();
-        triggerFX(enemy(state.turn), lastMove&&lastMove.to);
-      }
-      roomNet.innerHTML=bothHere?`<span class="live">● live</span> — opponent connected`:`waiting for opponent to join…`;
+function wireConnection(conn){
+  online.conn=conn;
+  conn.on("open",()=>{
+    online.opponentPresent=true;
+    onlineOverlay.classList.remove("show");
+    roomNet.innerHTML=`<span class="live">● connected</span> — playing live`;
+    if(online.host) sendState(); // hand the joiner the current board
+  });
+  conn.on("data",(msg)=>{
+    if(!msg||!msg.type) return;
+    if(msg.type==="state"||msg.type==="reset"){
+      deserialize(msg.payload);
+      selected=null; legalForSel=[]; orientation="A";
+      render();
+      if(msg.type==="state") triggerFX(enemy(state.turn), lastMove&&lastMove.to);
     }
-  }catch(e){ /* transient */ }
-  online.timer=setTimeout(pollOnline, 2000);
+  });
+  conn.on("close",()=>{ online.opponentPresent=false; roomNet.innerHTML="opponent disconnected"; });
+  conn.on("error",()=>{ roomNet.innerHTML="connection hiccup — ask them to reopen the link"; });
 }
 
-async function createRoom(){
-  if(!(await storageAvailable())){ onlineMsg.textContent="Online needs this game opened inside Claude (shared storage)."; return; }
+function createRoom(){
+  if(!peerAvailable()){ onlineMsg.textContent="Couldn't load the connection library — check your internet and reload the page."; return; }
   const code=randCode();
-  online={ code, side:"A", host:true, version:0, players:{A:true,S:false}, opponentPresent:false, lastReset:null, timer:null };
+  const peer=new Peer(peerIdFor(code),{debug:0});
+  online={ code, side:"A", host:true, peer, conn:null, opponentPresent:false };
   orientation="A";
   state=initialState(); history=[]; lastMove=null; selected=null; legalForSel=[];
-  await pushOnline();
-  showRoomView(code,"You are Abyss — you move first");
   render();
-  pollOnline();
+  showRoomView(code,"You are Abyss — you move first");
+  roomNet.textContent="waiting for opponent to join…";
+  peer.on("connection",(conn)=>wireConnection(conn));
+  peer.on("error",(err)=>{
+    if(err&&err.type==="unavailable-id"){ onlineMsg.textContent="That code just collided — try Create a room again."; leaveRoom(); }
+    else roomNet.textContent="Connection error — try leaving and creating a new room.";
+  });
 }
 
-async function joinRoom(){
+function joinRoom(){
   const code=document.getElementById("joinInput").value.trim().toUpperCase();
   if(code.length!==4){ onlineMsg.textContent="Enter the 4-character room code."; return; }
-  if(!(await storageAvailable())){ onlineMsg.textContent="Online needs this game opened inside Claude (shared storage)."; return; }
-  try{
-    const res=await window.storage.get(roomKey(code), true);
-    if(!res||!res.value){ onlineMsg.textContent="No room with that code. Double-check it?"; return; }
-    const data=JSON.parse(res.value);
-    if(data.players.S){ onlineMsg.textContent="That room is already full."; return; }
-    data.players.S=true; data.v=(data.v||0)+1;
-    online={ code, side:"S", host:false, version:data.v, players:data.players, opponentPresent:true, lastReset:data.resetFlag||null, timer:null };
-    await window.storage.set(roomKey(code), JSON.stringify(data), true);
-    deserialize(data.state);
-    orientation="A"; selected=null; legalForSel=[];
+  if(!peerAvailable()){ onlineMsg.textContent="Couldn't load the connection library — check your internet and reload the page."; return; }
+  const peer=new Peer({debug:0});
+  online={ code, side:"S", host:false, peer, conn:null, opponentPresent:false };
+  orientation="A"; selected=null; legalForSel=[];
+  peer.on("open",()=>{
+    const conn=peer.connect(peerIdFor(code),{reliable:true});
+    wireConnection(conn);
     showRoomView(code,"You are Sky — Abyss moves first");
-    onlineOverlay.classList.remove("show");
-    render();
-    pollOnline();
-  }catch(e){ onlineMsg.textContent="Couldn't reach that room. Try again."; }
+    roomNet.textContent="connecting…";
+  });
+  peer.on("error",()=>{ onlineMsg.textContent="Couldn't reach that room — double-check the code and that they're still on the page."; });
 }
 
 function showRoomView(code,role){
@@ -522,19 +520,19 @@ function showRoomView(code,role){
   document.getElementById("roomRole").textContent=role;
 }
 function leaveRoom(){
-  if(online){ if(online.timer) clearTimeout(online.timer);
-    // mark our slot empty (best effort)
-    (async()=>{ try{ const res=await window.storage.get(roomKey(online.code),true); if(res&&res.value){ const d=JSON.parse(res.value); d.players[online.side]=false; await window.storage.set(roomKey(online.code),JSON.stringify(d),true);} }catch(e){} })();
+  if(online){
+    try{ if(online.conn) online.conn.close(); }catch(e){}
+    try{ if(online.peer) online.peer.destroy(); }catch(e){}
   }
   online=null;
   onlineHome.style.display="block"; onlineRoomView.style.display="none";
   onlineOverlay.classList.remove("show");
-  onlineMsg.textContent=""; 
+  onlineMsg.textContent="";
   state=initialState(); history=[]; orientation="A"; lastMove=null; selected=null; legalForSel=[]; render();
 }
 
 document.getElementById("onlineBtn").addEventListener("click",()=>{ onlineOverlay.classList.add("show"); });
-document.getElementById("onlineClose").addEventListener("click",()=>{ if(!online) onlineOverlay.classList.remove("show"); else onlineOverlay.classList.remove("show"); });
+document.getElementById("onlineClose").addEventListener("click",()=>{ onlineOverlay.classList.remove("show"); });
 document.getElementById("createRoom").addEventListener("click",createRoom);
 document.getElementById("joinRoom").addEventListener("click",joinRoom);
 document.getElementById("leaveRoom").addEventListener("click",leaveRoom);
@@ -648,9 +646,142 @@ const fx=(function(){
   return { sea:burstBubbles, sky:skein };
 })();
 
+/* ============================================================
+   AMBIENT AUDIO — generative "chill seaside" loop, Web Audio API.
+   No external files: soft brown-noise waves, a slow warm pad,
+   sparse pentatonic chimes. All original/synthesized, so there's
+   nothing to license or fetch.
+   ============================================================ */
+const audio=(function(){
+  let ctx=null, master=null, started=false, playing=false, targetVol=0.45;
+  function ensureCtx(){
+    if(!ctx){
+      ctx=new (window.AudioContext||window.webkitAudioContext)();
+      master=ctx.createGain(); master.gain.value=0.0001; master.connect(ctx.destination);
+    }
+    return ctx;
+  }
+  function noiseBuffer(seconds){
+    const len=Math.floor(ctx.sampleRate*seconds);
+    const buf=ctx.createBuffer(1,len,ctx.sampleRate);
+    const d=buf.getChannelData(0);
+    let last=0;
+    for(let i=0;i<len;i++){ const w=Math.random()*2-1; last=(last+0.018*w)/1.018; d[i]=last*3.2; }
+    return buf;
+  }
+  let waveSwellGain=null, waveLfo=null;
+  function layerWaves(){
+    const src=ctx.createBufferSource(); src.buffer=noiseBuffer(6); src.loop=true;
+    const filt=ctx.createBiquadFilter(); filt.type="lowpass"; filt.frequency.value=650;
+    const swell=ctx.createGain(); swell.gain.value=0.55;
+    const lfo=ctx.createOscillator(); lfo.frequency.value=0.065;
+    const lfoGain=ctx.createGain(); lfoGain.gain.value=0.30;
+    lfo.connect(lfoGain); lfoGain.connect(swell.gain);
+    src.connect(filt); filt.connect(swell); swell.connect(master);
+    src.start(); lfo.start();
+    waveSwellGain=swell; waveLfo=lfo;
+  }
+  function layerWind(){
+    const src=ctx.createBufferSource(); src.buffer=noiseBuffer(6); src.loop=true;
+    const filt=ctx.createBiquadFilter(); filt.type="highpass"; filt.frequency.value=1700;
+    const g=ctx.createGain(); g.gain.value=0.045;
+    src.connect(filt); filt.connect(g); g.connect(master);
+    src.start();
+  }
+  function layerPad(){
+    const chords=[
+      [220.00,261.63,329.63,392.00],
+      [174.61,220.00,261.63,349.23],
+      [130.81,196.00,261.63,329.63],
+      [196.00,246.94,293.66,392.00],
+    ];
+    const lowpass=ctx.createBiquadFilter(); lowpass.type="lowpass"; lowpass.frequency.value=1100;
+    lowpass.connect(master);
+    let step=0;
+    function playChord(freqs,dur){
+      const g=ctx.createGain(); g.gain.setValueAtTime(0,ctx.currentTime);
+      g.gain.linearRampToValueAtTime(0.09,ctx.currentTime+dur*0.32);
+      g.gain.linearRampToValueAtTime(0.0,ctx.currentTime+dur);
+      g.connect(lowpass);
+      freqs.forEach((f,i)=>{
+        const o=ctx.createOscillator(); o.type=i%2===0?"sine":"triangle";
+        o.frequency.value=f*(1+(Math.random()-0.5)*0.003);
+        o.connect(g); o.start(ctx.currentTime); o.stop(ctx.currentTime+dur+0.5);
+      });
+    }
+    function loop(){
+      if(!playing) return;
+      const dur=9;
+      playChord(chords[step%chords.length],dur);
+      step++;
+      setTimeout(loop,dur*1000*0.85);
+    }
+    loop();
+  }
+  function layerChimes(){
+    const scale=[523.25,587.33,659.25,783.99,880.00,1046.50];
+    function ping(){
+      if(!playing) return;
+      if(Math.random()<0.5){
+        const f=scale[Math.floor(Math.random()*scale.length)];
+        const o=ctx.createOscillator(); o.type="sine"; o.frequency.value=f;
+        const g=ctx.createGain(); g.gain.setValueAtTime(0,ctx.currentTime);
+        g.gain.linearRampToValueAtTime(0.045,ctx.currentTime+0.05);
+        g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+3.5);
+        o.connect(g); g.connect(master);
+        o.start(); o.stop(ctx.currentTime+3.6);
+      }
+      setTimeout(ping,6000+Math.random()*9000);
+    }
+    ping();
+  }
+  function start(){
+    ensureCtx();
+    if(ctx.state==="suspended") ctx.resume();
+    if(!started){ started=true; layerWaves(); layerWind(); layerPad(); layerChimes(); }
+    playing=true;
+    master.gain.cancelScheduledValues(ctx.currentTime);
+    master.gain.setValueAtTime(master.gain.value,ctx.currentTime);
+    master.gain.linearRampToValueAtTime(targetVol,ctx.currentTime+1.4);
+  }
+  function stop(){
+    playing=false;
+    if(!ctx) return;
+    master.gain.cancelScheduledValues(ctx.currentTime);
+    master.gain.setValueAtTime(master.gain.value,ctx.currentTime);
+    master.gain.linearRampToValueAtTime(0.0001,ctx.currentTime+0.9);
+  }
+  function nudge(kind){
+    // a gentle acknowledgment on each move: sea swells the wave layer briefly,
+    // sky adds a soft airy whoosh via the wind filter opening.
+    if(!ctx||!playing) return;
+    if(kind==="A"&&waveSwellGain){
+      const g=waveSwellGain.gain; const now=ctx.currentTime;
+      g.cancelScheduledValues(now); g.setValueAtTime(g.value,now);
+      g.linearRampToValueAtTime(0.9,now+0.15); g.linearRampToValueAtTime(0.55,now+1.6);
+    } else if(kind==="S"){
+      const o=ctx.createOscillator(); o.type="sine"; o.frequency.setValueAtTime(1400,ctx.currentTime);
+      o.frequency.exponentialRampToValueAtTime(600,ctx.currentTime+0.5);
+      const g=ctx.createGain(); g.gain.setValueAtTime(0,ctx.currentTime);
+      g.gain.linearRampToValueAtTime(0.03,ctx.currentTime+0.08);
+      g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.6);
+      o.connect(g); g.connect(master); o.start(); o.stop(ctx.currentTime+0.65);
+    }
+  }
+  function setVolume(v){ targetVol=v; if(ctx&&playing) master.gain.linearRampToValueAtTime(v,ctx.currentTime+0.2); }
+  return { start, stop, nudge, setVolume, isPlaying:()=>playing };
+})();
+
+const musicBtn=document.getElementById("musicBtn");
+musicBtn.addEventListener("click",()=>{
+  if(audio.isPlaying()){ audio.stop(); musicBtn.textContent="♪ Music: off"; musicBtn.classList.remove("active"); }
+  else { audio.start(); musicBtn.textContent="♪ Music: on"; musicBtn.classList.add("active"); }
+});
+
 function triggerFX(team, toSq){
   if(!fx) return;
   if(team==="A") fx.sea(toSq); else fx.sky();
+  audio.nudge(team);
 }
 
 /* size pieces to the live square size */
